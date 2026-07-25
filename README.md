@@ -110,50 +110,21 @@ git commit -m "解决冲突"
 git push origin main
 ```
 
-## 六、数模专用注意事项
+## 六、注意事项
 
-| ⚠️ 坑 | 解决方案 |
-|---|---|
-| 有人忘 pull 直接 push | 先 `git pull`，有冲突解决完再 push |
-| 数据文件 push 上去仓库爆炸 | `data/`、`results/` 已写进 `.gitignore` |
-| 代码跑不通就 push | push 前本地跑一遍 `python src/solve.py` |
-| 论文手不会 Git | 论文用 Markdown 写，代码手帮忙合并；或写本地定时传网盘 |
-| 最后一天乱合并搞崩 | **比赛结束前 2 小时冻结 main 分支，只修 bug** |
+- 开工先 `git pull`，收工前 `git push`，别忘；
+- `data/`、`results/` 已写进 `.gitignore`，大文件放网盘；
+- push 前本地跑通 `python src/solve.py`；
+- 合并完 main 后在群里喊一声，让队友及时 pull；
+- **比赛结束前 2 小时冻结 main 分支，只修 bug**。
 
-## 七、运行说明（代码手补全后更新）
+## 七、运行说明
 
 ```bash
-# 安装依赖
-pip install -r requirements.txt
-
-# 复现全部数值结果（验收基准：与 docs/总体建模方案.md 第 4 节逐位对上，±0.5%）
-python src/solve.py
+pip install -r requirements.txt   # 安装依赖
+python src/solve.py               # 复现全部数值结果
 ```
 
-**代码验收两项自洽性检查**：
+**验收基准**：与 `docs/总体建模方案.md` 第 4 节数值逐位对上（±0.5%），并通过两项自洽性检查：
 1. 储能容量趋零时 LP 结果退化为解析基线；
-2. 最优解逐时段功率平衡残差 < 1e-6，SOC 轨迹在 [10%, 90%] 内。
-
-## 八、进度看板
-
-| 事项 | 状态 | 负责人 |
-|---|---|---|
-| 核心 LP 模型与全部数值结果 | ✅ 已验证 | 建模手 |
-| 代码模块化重构 + 全部图表 | 🔲 待做 | 代码手 |
-| 论文初稿（按方案 6.2 节结构） | 🔲 待做 | 论文手 |
-| 灵敏度分析三组实验 | 🔲 待做 | 代码手跑数 + 论文手成文 |
-| 逐时段调度表（附录） | 🔲 待出 | 代码手 |
-| 交叉校验：论文数字 vs 代码输出 | 🔲 提交前必做 | 全员 |
-
-## 九、每日 checklist
-
-```
-□ git pull origin main
-□ git checkout -b 你的分支
-□ 干活
-□ 本地测试能跑通
-□ git add . → git commit -m "清晰描述"
-□ git push origin 你的分支
-□ GitHub 上发 Pull Request / 合并
-□ 群里喊一声"我合了 main，你们 pull 一下"
-```
+2. 逐时段功率平衡残差 < 1e-6，SOC 轨迹在 [10%, 90%] 内。
