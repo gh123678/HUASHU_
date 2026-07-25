@@ -10,7 +10,7 @@ __pycache__/
 *.csv
 *.xlsx
 *.xls
-data/
+data/*
 dataset/
 
 # 模型中间结果/输出
@@ -19,7 +19,14 @@ dataset/
 *.model
 output/
 result/
-figures/          # 如果图表是自动生成的
+# 本仓库输出目录（README 约定的 results/）
+results/
+# 如果图表是自动生成的
+figures/
+# 但论文用的小图保留在 docs/figures/
+!docs/figures/
+# 数据目录的说明文件保留
+!data/README.md
 
 # 本地调试/测试
 test_*.py
