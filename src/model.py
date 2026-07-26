@@ -409,3 +409,108 @@ def solve_sizing_annual(L, pu_key_w, pu_key_s):
         "E_ess": float(x[i_eess]),
         "cost": float(res.fun) / 365.0,  # 加权日总成本
     }
+
+
+def solve_operation_dr(L, W, S, P_ess, E_ess, max_shift_frac=0.2,
+                       price_buy=1.0, c_w=0.5, c_s=0.4):
+    """运行层 LP + 需求响应：允许部分负荷在时间上平移。
+
+    新增变量 L_shift(24)：正值=负荷移入，负值=负荷移出，全日总和为 0。
+    每时段可移负荷上限 = max_shift_frac * L[t]。
+
+    参数
+    ----
+    max_shift_frac : 可平移负荷比例（0~1），默认 0.2（20%）
+    其余参数同 solve_operation
+
+    返回
+    ----
+    dict: 同 solve_operation + L_shift(24, 原始负荷调整量)
+    """
+    L = np.asarray(L, dtype=float)
+    W = np.asarray(W, dtype=float)
+    S = np.asarray(S, dtype=float)
+    price = _price_vec(price_buy)
+
+    per = 5 * T + (T + 1)  # 原运行变量 145
+    n = per + T             # + 24 个 L_shift 变量
+    i_buy, i_ch, i_dis, i_wu, i_su, i_e = 0, T, 2 * T, 3 * T, 4 * T, 5 * T
+    i_shift = per
+
+    # 目标：min Σ [price_t·buy_t + c_w·Wuse_t + c_s·Suse_t]
+    c = np.zeros(n)
+    c[i_buy:i_ch] = price
+    c[i_wu:i_su] = c_w
+    c[i_su:i_e] = c_s
+
+    A_eq, b_eq = [], []
+
+    # 功率平衡: Wuse_t + Suse_t + dis_t + buy_t - ch_t = L_t + L_shift_t
+    for t in range(T):
+        row = np.zeros(n)
+        row[i_buy + t] = 1.0
+        row[i_ch + t] = -1.0
+        row[i_dis + t] = 1.0
+        row[i_wu + t] = 1.0
+        row[i_su + t] = 1.0
+        row[i_shift + t] = -1.0  # L_shift 移入 → 增加负荷需求
+        A_eq.append(row)
+        b_eq.append(L[t])
+
+    # SOC 递推: E_{t+1} - E_t - η·ch_t + dis_t/η = 0
+    for t in range(T):
+        row = np.zeros(n)
+        row[i_e + t + 1] = 1.0
+        row[i_e + t] = -1.0
+        row[i_ch + t] = -ETA
+        row[i_dis + t] = 1.0 / ETA
+        A_eq.append(row)
+        b_eq.append(0.0)
+
+    # 循环约束: E_24 = E_0
+    row = np.zeros(n)
+    row[i_e + T] = 1.0
+    row[i_e] = -1.0
+    A_eq.append(row)
+    b_eq.append(0.0)
+
+    # 负荷守恒: Σ L_shift_t = 0
+    row = np.zeros(n)
+    for t in range(T):
+        row[i_shift + t] = 1.0
+    A_eq.append(row)
+    b_eq.append(0.0)
+
+    bounds = (
+        [(0, None)] * T                              # buy
+        + [(0, P_ess)] * T                           # ch
+        + [(0, P_ess)] * T                           # dis
+        + [(0, W[t]) for t in range(T)]              # Wuse
+        + [(0, S[t]) for t in range(T)]              # Suse
+        + [(SOC_LO * E_ess, SOC_HI * E_ess)] * (T + 1)  # E
+        + [(-max_shift_frac * L[t], max_shift_frac * L[t]) for t in range(T)]  # L_shift
+    )
+
+    res = linprog(c, A_eq=np.array(A_eq), b_eq=np.array(b_eq),
+                  bounds=bounds, method="highs")
+    if not res.success:
+        raise RuntimeError(f"需求响应 LP 求解失败: {res.message}")
+
+    x = res.x
+    buy_t = x[i_buy:i_ch]
+    Wu = x[i_wu:i_su]
+    Su = x[i_su:i_e]
+    L_shift = x[i_shift:i_shift + T]
+    return {
+        "cost": float(res.fun),
+        "buy": float(buy_t.sum()),
+        "cur": float((W - Wu).sum() + (S - Su).sum()),
+        "ch": x[i_ch:i_dis],
+        "dis": x[i_dis:i_wu],
+        "E": x[i_e:i_e + T + 1],
+        "Wu": Wu,
+        "Su": Su,
+        "buy_t": buy_t,
+        "L_shift": L_shift,
+        "L_adj": L + L_shift,  # 调整后的负荷曲线
+    }
