@@ -190,6 +190,26 @@ def q3(parks):
     print(f"{'联合':<6}{r['P_w']:>10.0f}{r['P_pv']:>10.0f}{r['P_ess']:>10.0f}"
           f"{r['E_ess']:>10.0f}{r['cost']:>12.1f}")
 
+    # Q3(1) 自洽性校验：用最优容量跑运行LP，检查功率平衡和SOC约束
+    print("\n【3(1) 自洽性校验】")
+    for p, d in parks.items():
+        r = res31[p]
+        w_pu, s_pu = pu_map[p]
+        W = w_pu * r["P_w"] if w_pu is not None else np.zeros(24)
+        S = s_pu * r["P_pv"] if s_pu is not None else np.zeros(24)
+        op = solve_operation(d["L"] * 1.5, W, S, r["P_ess"], r["E_ess"],
+                             price_buy=1.0, c_w=0.0, c_s=0.0)
+        check_power_balance(op, d["L"] * 1.5, r["P_ess"], r["E_ess"])
+        print(f"  {p}: 功率平衡 OK, SOC 边界 OK, 运行成本 {op['cost']:.1f}")
+    # 联合园区校验
+    r = res31["联合"]
+    W_j = pu_w_j * r["P_w"]
+    S_j = pu_s_j * r["P_pv"]
+    op_j = solve_operation(L_j, W_j, S_j, r["P_ess"], r["E_ess"],
+                           price_buy=1.0, c_w=0.0, c_s=0.0)
+    check_power_balance(op_j, L_j, r["P_ess"], r["E_ess"])
+    print(f"  联合: 功率平衡 OK, SOC 边界 OK, 运行成本 {op_j['cost']:.1f}")
+
     print("\n【3(2) 12 月耦合 + 分时电价（独立运营）】")
     print(f"{'园区':<6}{'风电kW':>10}{'光伏kW':>10}{'储能kW':>10}{'储能kWh':>10}{'加权日总成本':>14}")
     monthly = load_monthly()
@@ -201,6 +221,21 @@ def q3(parks):
         res32[p] = r
         print(f"{p:<6}{r['P_w']:>10.0f}{r['P_pv']:>10.0f}{r['P_ess']:>10.0f}"
               f"{r['E_ess']:>10.0f}{r['cost']:>14.1f}")
+
+    # Q3(2) 自洽性校验：选 2 月/8 月典型日，用最优容量跑运行LP
+    print("\n【3(2) 自洽性校验（2 月 / 8 月典型日）】")
+    for p, d in parks.items():
+        r = res32[p]
+        for m in (1, 7):  # 2 月、8 月（0 基）
+            mk_w = None if p == "A" else monthly[m][f"{p}_w"]
+            mk_s = None if p == "B" else monthly[m][f"{p}_pv"]
+            W = mk_w * r["P_w"] if mk_w is not None else np.zeros(24)
+            S = mk_s * r["P_pv"] if mk_s is not None else np.zeros(24)
+            op = solve_operation(d["L"] * 1.5, W, S, r["P_ess"], r["E_ess"],
+                                 price_buy=model.TOU_PRICE, c_w=0.0, c_s=0.0)
+            check_power_balance(op, d["L"] * 1.5, r["P_ess"], r["E_ess"])
+            print(f"  {p} {m+1}月: 功率平衡 OK, SOC 边界 OK, 运行成本 {op['cost']:.1f}")
+
     return res31, res32
 
 
