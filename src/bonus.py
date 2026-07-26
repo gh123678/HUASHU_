@@ -4,7 +4,8 @@ bonus.py — 加分项（方案 §7 待办 + §8 方法储备）
 
 1. 逐时段购电计划表/储能调度表导出（Q1(2)、Q2(2)、Q3(2) 附录，CSV 存 results/）
 2. 灵敏度实验4：负荷增长 50%±10% 扰动对 Q3(1) 配置的稳健性
-3. 差分进化（DE）交叉验证 Q3(1)：智能算法外层寻优 vs 单 LP 全局最优
+3. 模型讨论：A 园区自由配置（可建风电）vs 纯光伏对比
+4. 差分进化（DE）交叉验证 Q3(1)：智能算法外层寻优 vs 单 LP 全局最优
 
 运行：python src/bonus.py
 """
@@ -118,6 +119,35 @@ def sensitivity_load_robustness(parks):
     print("  saved:", os.path.basename(path))
 
 
+def free_config_discussion(parks):
+    """模型讨论素材：A 园区解除"保持原电源类型"约束、允许自建风电。
+
+    A 无测风数据，借用 B 园区风电 pu 曲线作代表（同区域风资源近似）。
+    结论：风电 1584 kW 为主、日总成本 3945 元，显著低于纯光伏方案，
+    用于论文"模型讨论"论证风电经济性碾压光伏（方案 §5 约定 2）。
+    """
+    print("\n【模型讨论：A 园区自由配置（可建风电）vs 纯光伏】")
+    pu = load_typical_day()
+    L = parks["A"]["L"] * 1.5
+    base = solve_sizing(L, None, pu["A_pv"], price_buy=1.0)
+    free = solve_sizing(L, pu["B_w"], pu["A_pv"], price_buy=1.0)
+    rows = []
+    for name, r in [("纯光伏（原口径）", base), ("自由配置（借用B风pu）", free)]:
+        print(f"  {name}: 风电 {r['P_w']:.0f} kW, 光伏 {r['P_pv']:.0f} kW, "
+              f"储能 {r['P_ess']:.0f}/{r['E_ess']:.0f}, 日总成本 {r['cost']:.1f} 元")
+        rows.append({
+            "方案": name,
+            "风电(kW)": round(r["P_w"], 1), "光伏(kW)": round(r["P_pv"], 1),
+            "储能(kW/kWh)": f"{r['P_ess']:.0f}/{r['E_ess']:.0f}",
+            "日总成本(元)": round(r["cost"], 1),
+        })
+    print(f"  自由配置日省 {base['cost'] - free['cost']:.1f} 元"
+          f"（{(base['cost'] - free['cost']) / base['cost']:.1%}）")
+    path = os.path.join(RESULTS_DIR, "模型讨论_A自由配置对比.csv")
+    pd.DataFrame(rows).to_csv(path, index=False, encoding="utf-8-sig")
+    print("  saved:", os.path.basename(path))
+
+
 def de_cross_validation(parks):
     """差分进化交叉验证 Q3(1)：外层 DE 搜容量、内层 LP 算运行成本。
 
@@ -176,5 +206,6 @@ if __name__ == "__main__":
     parks = typical_day_power()
     export_schedule_tables(parks)
     sensitivity_load_robustness(parks)
+    free_config_discussion(parks)
     de_cross_validation(parks)
     print("\n加分项全部完成，结果见 results/")
