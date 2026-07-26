@@ -15,7 +15,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 # 中文标注（论文图全部要求中文）
-plt.rcParams["font.sans-serif"] = ["SimHei"]
+# 字体降级链：SimHei → Microsoft YaHei → WenQuanYi → Noto Sans CJK → sans-serif
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "WenQuanYi Micro Hei", "Noto Sans CJK SC", "sans-serif"]
 plt.rcParams["axes.unicode_minus"] = False
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
