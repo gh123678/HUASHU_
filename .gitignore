@@ -20,7 +20,9 @@ dataset/
 output/
 result/
 # 本仓库输出目录（README 约定的 results/）
-results/
+results/*
+# 但 results 目录的说明文件保留
+!results/README.md
 # 如果图表是自动生成的
 figures/
 # 但论文用的小图保留在 docs/figures/
