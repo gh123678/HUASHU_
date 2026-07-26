@@ -514,3 +514,134 @@ def solve_operation_dr(L, W, S, P_ess, E_ess, max_shift_frac=0.2,
         "L_shift": L_shift,
         "L_adj": L + L_shift,  # 调整后的负荷曲线
     }
+
+
+def degradation_rate(P_ess, E_ess, cycle_life=6000, dod=0.8):
+    """电池衰减边际成本 (元/kWh 吞吐量)。
+
+    每充/放 1 kWh 电所分摊的电池投资衰减。
+    λ = (P*c_p + E*c_e) / (cycle_life * 2 * E * dod)
+
+    参数
+    ----
+    cycle_life : 全等效循环次数（LFP 典型 6000）
+    dod : 放电深度（典型 0.8）
+    """
+    if P_ess <= 0 or E_ess <= 0:
+        return 0.0
+    total_inv = ESS_P_COST * P_ess + ESS_E_COST * E_ess
+    lifetime_throughput = cycle_life * 2 * E_ess * dod
+    return total_inv / lifetime_throughput
+
+
+def solve_operation_degradation(L, W, S, P_ess, E_ess,
+                                price_buy=1.0, c_w=0.5, c_s=0.4,
+                                cycle_life=6000, dod=0.8):
+    """运行层 LP + 电池衰减成本。
+
+    在目标函数中加入 λ_deg * Σ(ch_t + dis_t)，
+    调度时会自动倾向减少充放电以降低衰减成本。
+    其余参数同 solve_operation。
+    """
+    L = np.asarray(L, dtype=float)
+    W = np.asarray(W, dtype=float)
+    S = np.asarray(S, dtype=float)
+    price = _price_vec(price_buy)
+    lam = degradation_rate(P_ess, E_ess, cycle_life, dod)
+
+    per = 5 * T + (T + 1)
+    n = per
+    i_buy, i_ch, i_dis, i_wu, i_su, i_e = 0, T, 2 * T, 3 * T, 4 * T, 5 * T
+
+    c = np.zeros(n)
+    c[i_buy:i_ch] = price
+    c[i_ch:i_dis] = lam       # 充电衰减成本
+    c[i_dis:i_wu] = lam       # 放电衰减成本
+    c[i_wu:i_su] = c_w
+    c[i_su:i_e] = c_s
+
+    A_eq, b_eq = [], []
+
+    for t in range(T):
+        row = np.zeros(n)
+        row[i_buy + t] = 1.0
+        row[i_ch + t] = -1.0
+        row[i_dis + t] = 1.0
+        row[i_wu + t] = 1.0
+        row[i_su + t] = 1.0
+        A_eq.append(row)
+        b_eq.append(L[t])
+
+    for t in range(T):
+        row = np.zeros(n)
+        row[i_e + t + 1] = 1.0
+        row[i_e + t] = -1.0
+        row[i_ch + t] = -ETA
+        row[i_dis + t] = 1.0 / ETA
+        A_eq.append(row)
+        b_eq.append(0.0)
+
+    row = np.zeros(n)
+    row[i_e + T] = 1.0
+    row[i_e] = -1.0
+    A_eq.append(row)
+    b_eq.append(0.0)
+
+    bounds = (
+        [(0, None)] * T
+        + [(0, P_ess)] * T
+        + [(0, P_ess)] * T
+        + [(0, W[t]) for t in range(T)]
+        + [(0, S[t]) for t in range(T)]
+        + [(SOC_LO * E_ess, SOC_HI * E_ess)] * (T + 1)
+    )
+
+    res = linprog(c, A_eq=np.array(A_eq), b_eq=np.array(b_eq),
+                  bounds=bounds, method="highs")
+    if not res.success:
+        raise RuntimeError(f"电池衰减 LP 求解失败: {res.message}")
+
+    x = res.x
+    buy_t = x[i_buy:i_ch]
+    ch = x[i_ch:i_dis]
+    dis = x[i_dis:i_wu]
+    Wu = x[i_wu:i_su]
+    Su = x[i_su:i_e]
+    throughput = float(ch.sum() + dis.sum())
+    return {
+        "cost": float(res.fun),
+        "buy": float(buy_t.sum()),
+        "cur": float((W - Wu).sum() + (S - Su).sum()),
+        "ch": ch, "dis": dis, "E": x[i_e:i_e + T + 1],
+        "Wu": Wu, "Su": Su, "buy_t": buy_t,
+        "throughput": throughput,
+        "degradation_cost": lam * throughput,
+        "lambda_deg": lam,
+    }
+
+
+def solve_operation_robust(L, W, S, P_ess, E_ess,
+                           delta_L=0.0, delta_W=0.0, delta_S=0.0,
+                           price_buy=1.0, c_w=0.5, c_s=0.4):
+    """运行层 LP + 鲁棒优化（盒式不确定集）。
+
+    考虑最差情况下的调度：
+      L_hi = L * (1 + delta_L)   — 负荷高于预测
+      W_lo = W * (1 - delta_W)   — 风电低于预测
+      S_lo = S * (1 - delta_S)   — 光伏低于预测
+
+    返回同 solve_operation，额外字段：
+      delta_L, delta_W, delta_S : 输入的不确定度
+      L_used, W_used, S_used : 实际使用的参数
+    """
+    L = np.asarray(L, dtype=float)
+    W = np.asarray(W, dtype=float)
+    S = np.asarray(S, dtype=float)
+    price = _price_vec(price_buy)
+
+    L_hi = L * (1.0 + delta_L)
+    W_lo = np.maximum(W * (1.0 - delta_W), 0.0)
+    S_lo = np.maximum(S * (1.0 - delta_S), 0.0)
+
+    return solve_operation(L_hi, W_lo, S_lo, P_ess, E_ess,
+                           price_buy=price, c_w=c_w, c_s=c_s)
